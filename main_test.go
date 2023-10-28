@@ -26,6 +26,7 @@ After merge, 0 new article will be created and 0 existing article will be update
 			commentData{
 				NewArticles: []*Article{{
 					Title: "My New Article",
+					URL:   "dev.to",
 				}},
 			},
 			`## Article Sync Summary
@@ -36,7 +37,7 @@ After merge, 1 new article will be created and 0 existing article will be update
 - My New Article`,
 			`completed sync: 1 new, 0 updated
 
-- new: My New Article`,
+- new: My New Article (dev.to)`,
 		},
 		{
 			"TwoNewArticles",
@@ -44,9 +45,11 @@ After merge, 1 new article will be created and 0 existing article will be update
 				NewArticles: []*Article{
 					{
 						Title: "My New Article",
+						URL:   "dev.to",
 					},
 					{
 						Title: "My Other New Article",
+						URL:   "dev.to",
 					}},
 			},
 			`## Article Sync Summary
@@ -58,8 +61,8 @@ After merge, 2 new article will be created and 0 existing article will be update
 - My Other New Article`,
 			`completed sync: 2 new, 0 updated
 
-- new: My New Article
-- new: My Other New Article`,
+- new: My New Article (dev.to)
+- new: My Other New Article (dev.to)`,
 		},
 		{
 			"OneUpdatedArticle",
@@ -77,7 +80,7 @@ After merge, 0 new article will be created and 1 existing article will be update
 - [My Updated Article](dev.to)`,
 			`completed sync: 0 new, 1 updated
 
-- updated: [My Updated Article](dev.to)`,
+- updated: My Updated Article (dev.to)`,
 		},
 		{
 			"TwoUpdatedArticles",
@@ -102,14 +105,15 @@ After merge, 0 new article will be created and 2 existing article will be update
 - [My Other Updated Article](dev.to)`,
 			`completed sync: 0 new, 2 updated
 
-- updated: [My Updated Article](dev.to)
-- updated: [My Other Updated Article](dev.to)`,
+- updated: My Updated Article (dev.to)
+- updated: My Other Updated Article (dev.to)`,
 		},
 		{
 			"UpdatedAndNewArticles",
 			commentData{
 				NewArticles: []*Article{{
 					Title: "My New Article",
+					URL:   "dev.to",
 				}},
 				UpdatedArticles: []*Article{{
 					Title: "My Updated Article",
@@ -127,8 +131,8 @@ After merge, 1 new article will be created and 1 existing article will be update
 - [My Updated Article](dev.to)`,
 			`completed sync: 1 new, 1 updated
 
-- new: My New Article
-- updated: [My Updated Article](dev.to)`,
+- new: My New Article (dev.to)
+- updated: My Updated Article (dev.to)`,
 		},
 	}
 

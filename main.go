@@ -41,10 +41,10 @@ After merge, {{ len .NewArticles }} new article will be created and {{ len .Upda
 	commitTemplate = `completed sync: {{ len .NewArticles }} new, {{ len .UpdatedArticles }} updated
 {{ if or (gt (len .NewArticles) 0) (gt (len .UpdatedArticles) 0) }}{{ end }}
 {{- range .NewArticles }}
-- new: {{ .Title }}
+- new: {{ .Title }} ({{ .URL }})
 {{- end }}
 {{- range .UpdatedArticles }}
-- updated: [{{ .Title }}]({{ .URL }})
+- updated: {{ .Title }} ({{ .URL }})
 {{- end }}`
 )
 

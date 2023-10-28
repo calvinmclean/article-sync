@@ -55,7 +55,8 @@ type Article struct {
 	Description string `json:"description"`
 	URL         string `json:"url"`
 
-	new bool
+	new     bool
+	updated bool
 }
 
 type commentData struct {
@@ -144,10 +145,10 @@ func (c *client) syncArticlesFromRootDirectory(rootDir string, data *commentData
 			return fmt.Errorf("error synchronizing article from path %s: %w", path, err)
 		}
 
-		switch article.new {
-		case true:
+		switch {
+		case article.new:
 			data.NewArticles = append(data.NewArticles, article)
-		case false:
+		case article.updated:
 			data.UpdatedArticles = append(data.UpdatedArticles, article)
 		}
 
@@ -202,6 +203,7 @@ func (c *client) syncArticleFromDirectory(dir string) (*Article, error) {
 			return article, nil
 		}
 		logger.Info("updating article with new body")
+		article.updated = true
 
 		if c.dryRun {
 			return article, nil

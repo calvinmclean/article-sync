@@ -5,21 +5,40 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"text/template"
 
 	"github.com/calvinmclean/article-sync/api"
 )
 
+// Article is used to show which fields can read/write to local file
+type Article struct {
+	ID          int    `json:"id"`
+	Slug        string `json:"slug"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
+
+	new bool
+}
+
+type commentData struct {
+	NewArticles     []*Article
+	UpdatedArticles []*Article
+}
+
 func main() {
-	var apiKey, path string
+	var apiKey, path, ghComment string
 	var dryRun bool
 	flag.StringVar(&apiKey, "api-key", "", "API key for accessing dev.to")
 	flag.StringVar(&path, "path", "./articles", "root path to scan for articles")
+	flag.StringVar(&ghComment, "gh-comment", "", "file to write comment to")
 	flag.BoolVar(&dryRun, "dry-run", false, "dry-run to print which changes will be made without doing them")
 	flag.Parse()
 
@@ -35,9 +54,23 @@ func main() {
 		log.Fatalf("error creating API client: %v", err)
 	}
 
-	err = client.syncArticlesFromRootDirectory(path)
+	var data commentData
+	err = client.syncArticlesFromRootDirectory(path, &data)
 	if err != nil {
 		log.Fatalf("error synchronizing directory: %v", err)
+	}
+
+	if ghComment != "" {
+		file, err := os.Create(ghComment)
+		if err != nil {
+			log.Fatalf("error creating comment file: %v", err)
+		}
+		defer file.Close()
+
+		err = renderCommentTemplate(data, file)
+		if err != nil {
+			log.Fatalf("error writing to comment file: %v", err)
+		}
 	}
 }
 
@@ -59,15 +92,7 @@ func newClient(apikey string, dryRun bool) (*client, error) {
 	return &client{c, dryRun, slog.New(slog.NewTextHandler(os.Stdout, nil))}, nil
 }
 
-// Article is used to show which fields can read/write to local file
-type Article struct {
-	ID          int    `json:"id"`
-	Slug        string `json:"slug"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-}
-
-func (c *client) syncArticlesFromRootDirectory(rootDir string) error {
+func (c *client) syncArticlesFromRootDirectory(rootDir string, data *commentData) error {
 	return filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("error accessing path %s: %w", path, err)
@@ -82,10 +107,18 @@ func (c *client) syncArticlesFromRootDirectory(rootDir string) error {
 		}
 
 		c.logger.Info("sychronizing article", "directory", path)
-		err = c.syncArticleFromDirectory(path)
+		article, err := c.syncArticleFromDirectory(path)
 		if err != nil {
 			return fmt.Errorf("error synchronizing article from path %s: %w", path, err)
 		}
+
+		switch article.new {
+		case true:
+			data.NewArticles = append(data.NewArticles, article)
+		case false:
+			data.UpdatedArticles = append(data.UpdatedArticles, article)
+		}
+
 		return nil
 	})
 }
@@ -94,68 +127,67 @@ func (c *client) syncArticlesFromRootDirectory(rootDir string) error {
 //   - If no ID is provided, create a new article and record ID
 //   - Otherwise, get article by ID and compare text to local text. If the file is
 //     recently changed, it will be updated by API
-func (c *client) syncArticleFromDirectory(dir string) error {
+func (c *client) syncArticleFromDirectory(dir string) (*Article, error) {
 	markdownBody, err := os.ReadFile(filepath.Join(dir, "article.md"))
 	if err != nil {
-		return fmt.Errorf("error reading markdown: %w", err)
+		return nil, fmt.Errorf("error reading markdown: %w", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(dir, "article.json"))
 	if err != nil {
-		return fmt.Errorf("error reading JSON file: %w", err)
+		return nil, fmt.Errorf("error reading JSON file: %w", err)
 	}
 
-	var article Article
+	var article *Article
 	err = json.Unmarshal(data, &article)
 	if err != nil {
-		return fmt.Errorf("error parsing article details: %w", err)
+		return nil, fmt.Errorf("error parsing article details: %w", err)
 	}
 
 	logger := c.logger.With("directory", dir).With("title", article.Title)
 
 	var respBody []byte
-	var created bool
 	switch article.ID {
 	case 0:
-		created = true
+		article.new = true
 		logger.Info("creating new article")
 		if c.dryRun {
-			return nil
+			return article, nil
 		}
 		respBody, err = c.createArticle(article, string(markdownBody))
 		if err != nil {
-			return fmt.Errorf("error creating article: %w", err)
+			return nil, fmt.Errorf("error creating article: %w", err)
 		}
 	default:
 		logger = logger.With("id", article.ID)
 
-		shouldUpdate, err := c.shouldUpdateArticle(string(markdownBody), article.ID)
+		shouldUpdate, err := c.shouldUpdateArticle(string(markdownBody), article)
 		if err != nil {
-			return fmt.Errorf("error checking if article needs update: %w", err)
+			return nil, fmt.Errorf("error checking if article needs update: %w", err)
 		}
 		if !shouldUpdate {
 			logger.Info("article is up-to-date")
-			return nil
+			return article, nil
 		}
 		logger.Info("updating article with new body")
 
 		if c.dryRun {
-			return nil
+			return article, nil
 		}
 
 		respBody, err = c.updateArticle(dir, article, string(markdownBody))
 		if err != nil {
-			return fmt.Errorf("error updating article: %w", err)
+			return nil, fmt.Errorf("error updating article: %w", err)
 		}
 	}
 
 	err = json.Unmarshal(respBody, &article)
 	if err != nil {
-		return fmt.Errorf("error unmarshaling response JSON: %w", err)
+		return nil, fmt.Errorf("error unmarshaling response JSON: %w", err)
 	}
 
 	// article was created so logger doesn't already have ID
-	if created {
+	if article.new {
 		logger = logger.With("id", article.ID)
 	}
 
@@ -163,32 +195,37 @@ func (c *client) syncArticleFromDirectory(dir string) error {
 
 	newData, err := json.MarshalIndent(article, "", "    ")
 	if err != nil {
-		return fmt.Errorf("error marshaling response JSON to write to file: %w", err)
+		return nil, fmt.Errorf("error marshaling response JSON to write to file: %w", err)
 	}
 
 	err = os.WriteFile(filepath.Join(dir, "article.json"), newData, 0640)
 	if err != nil {
-		return fmt.Errorf("error writing JSON file: %w", err)
+		return nil, fmt.Errorf("error writing JSON file: %w", err)
 	}
 
-	return nil
+	return article, nil
 }
 
-func (c *client) shouldUpdateArticle(markdownBody string, id int) (bool, error) {
-	article, err := c.getArticle(id)
+func (c *client) shouldUpdateArticle(markdownBody string, article *Article) (bool, error) {
+	articleData, err := c.getArticle(article.ID)
 	if err != nil {
 		return false, fmt.Errorf("error getting article: %w", err)
 	}
 
-	articleMarkdown, ok := article["body_markdown"].(string)
+	articleMarkdown, ok := articleData["body_markdown"].(string)
 	if !ok {
 		return false, fmt.Errorf("error checking body_markdown")
+	}
+
+	article.URL, ok = articleData["url"].(string)
+	if !ok {
+		return false, fmt.Errorf("error getting article url")
 	}
 
 	return articleMarkdown != markdownBody, nil
 }
 
-func (c *client) updateArticle(dir string, article Article, markdownBody string) ([]byte, error) {
+func (c *client) updateArticle(dir string, article *Article, markdownBody string) ([]byte, error) {
 	published := true
 	articleBody := api.Article{}
 	articleBody.Article = &struct {
@@ -233,7 +270,7 @@ func (c *client) getArticle(id int) (map[string]interface{}, error) {
 	return *resp.JSON200, nil
 }
 
-func (c *client) createArticle(article Article, body string) ([]byte, error) {
+func (c *client) createArticle(article *Article, body string) ([]byte, error) {
 	published := true
 	articleBody := api.Article{}
 	articleBody.Article = &struct {
@@ -263,4 +300,34 @@ func (c *client) createArticle(article Article, body string) ([]byte, error) {
 	}
 
 	return resp.Body, nil
+}
+
+func renderCommentTemplate(data commentData, destination io.Writer) error {
+	const commentTemplate = `## Article Sync Summary
+
+After merge, {{ len .NewArticles }} new article will be created and {{ len .UpdatedArticles }} existing article will be updated.
+
+{{- if gt (len .NewArticles) 0 }}
+
+### New Articles
+{{- range .NewArticles }}
+- {{ .Title }}
+{{- end }}
+{{- end }}
+{{- if gt (len .UpdatedArticles) 0 }}
+
+### Updated Articles
+{{- range .UpdatedArticles }}
+- [{{ .Title }}]({{ .URL }})
+{{- end }}
+{{- end }}`
+
+	tmpl := template.Must(template.New("github_comment").Parse(commentTemplate))
+
+	err := tmpl.Execute(destination, data)
+	if err != nil {
+		return fmt.Errorf("error executing template: %w", err)
+	}
+
+	return nil
 }

@@ -99,7 +99,7 @@ func main() {
 	}
 
 	if commit != "" {
-		err = renderTemplateToFile(commit, commit, data)
+		err = renderTemplateToFile(commit, commitTemplate, data)
 		if err != nil {
 			log.Fatalf("error writing commit: %v", err)
 		}

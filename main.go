@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"text/template"
+	"time"
 
 	"github.com/calvinmclean/article-sync/api"
 )
@@ -279,7 +280,9 @@ func (c *client) updateArticle(dir string, article *Article, markdownBody string
 		Published:    &published,
 	}
 
-	resp, err := c.UpdateArticleWithResponse(context.Background(), int32(article.ID), articleBody)
+	resp, err := doWithRetry[*api.UpdateArticleResponse](func() (*api.UpdateArticleResponse, error) {
+		return c.UpdateArticleWithResponse(context.Background(), int32(article.ID), articleBody)
+	}, 5, 1*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("error updating article: %w", err)
 	}
@@ -292,7 +295,9 @@ func (c *client) updateArticle(dir string, article *Article, markdownBody string
 }
 
 func (c *client) getArticle(id int) (map[string]interface{}, error) {
-	resp, err := c.GetArticleByIdWithResponse(context.Background(), id)
+	resp, err := doWithRetry[*api.GetArticleByIdResponse](func() (*api.GetArticleByIdResponse, error) {
+		return c.GetArticleByIdWithResponse(context.Background(), id)
+	}, 5, 1*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("error getting article %d: %w", id, err)
 	}
@@ -324,7 +329,9 @@ func (c *client) createArticle(article *Article, body string) ([]byte, error) {
 		Published:    &published,
 	}
 
-	resp, err := c.CreateArticleWithResponse(context.Background(), articleBody)
+	resp, err := doWithRetry[*api.CreateArticleResponse](func() (*api.CreateArticleResponse, error) {
+		return c.CreateArticleWithResponse(context.Background(), articleBody)
+	}, 5, 1*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("error creating article: %w", err)
 	}
@@ -360,4 +367,26 @@ func renderTemplate(tmplString string, data commentData, destination io.Writer) 
 	}
 
 	return nil
+}
+
+type response interface {
+	StatusCode() int
+}
+
+func doWithRetry[T response](f func() (T, error), numRetries int, initialWait time.Duration) (T, error) {
+	for i := 1; i <= numRetries; i++ {
+		result, err := f()
+		if err != nil {
+			return *new(T), err
+		}
+
+		if result.StatusCode() == http.StatusTooManyRequests {
+			time.Sleep(initialWait * time.Duration(i))
+			continue
+		}
+
+		return result, err
+	}
+
+	return *new(T), fmt.Errorf("exhausted retry limit %d", numRetries)
 }

@@ -337,13 +337,13 @@ func (c *client) createArticle(article *Article, body string) ([]byte, error) {
 func renderTemplateToFile(path, tmpl string, data commentData) error {
 	file, err := os.Create(path)
 	if err != nil {
-		return fmt.Errorf("error creating comment file: %w", err)
+		return fmt.Errorf("error creating file: %w", err)
 	}
 	defer file.Close()
 
 	err = renderTemplate(tmpl, data, file)
 	if err != nil {
-		return fmt.Errorf("error writing to comment file: %w", err)
+		return fmt.Errorf("error writing to file: %w", err)
 	}
 
 	return nil

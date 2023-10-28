@@ -17,6 +17,36 @@ import (
 	"github.com/calvinmclean/article-sync/api"
 )
 
+const (
+	commentTemplate = `## Article Sync Summary
+
+After merge, {{ len .NewArticles }} new article will be created and {{ len .UpdatedArticles }} existing article will be updated.
+
+{{- if gt (len .NewArticles) 0 }}
+
+### New Articles
+{{- range .NewArticles }}
+- {{ .Title }}
+{{- end }}
+{{- end }}
+{{- if gt (len .UpdatedArticles) 0 }}
+
+### Updated Articles
+{{- range .UpdatedArticles }}
+- [{{ .Title }}]({{ .URL }})
+{{- end }}
+{{- end }}`
+
+	commitTemplate = `completed sync: {{ len .NewArticles }} new, {{ len .UpdatedArticles }} updated
+{{ if or (gt (len .NewArticles) 0) (gt (len .UpdatedArticles) 0) }}{{ end }}
+{{- range .NewArticles }}
+- new: {{ .Title }}
+{{- end }}
+{{- range .UpdatedArticles }}
+- updated: [{{ .Title }}]({{ .URL }})
+{{- end }}`
+)
+
 // Article is used to show which fields can read/write to local file
 type Article struct {
 	ID          int    `json:"id"`
@@ -34,11 +64,12 @@ type commentData struct {
 }
 
 func main() {
-	var apiKey, path, ghComment string
+	var apiKey, path, prComment, commit string
 	var dryRun bool
 	flag.StringVar(&apiKey, "api-key", "", "API key for accessing dev.to")
 	flag.StringVar(&path, "path", "./articles", "root path to scan for articles")
-	flag.StringVar(&ghComment, "gh-comment", "", "file to write comment to")
+	flag.StringVar(&prComment, "pr-comment", "", "file to write the PR comment into")
+	flag.StringVar(&commit, "commit", "", "file to write the commit message into")
 	flag.BoolVar(&dryRun, "dry-run", false, "dry-run to print which changes will be made without doing them")
 	flag.Parse()
 
@@ -60,16 +91,17 @@ func main() {
 		log.Fatalf("error synchronizing directory: %v", err)
 	}
 
-	if ghComment != "" {
-		file, err := os.Create(ghComment)
+	if prComment != "" {
+		err = renderTemplateToFile(path, commentTemplate, data)
 		if err != nil {
-			log.Fatalf("error creating comment file: %v", err)
+			log.Fatalf("error writing PR comment: %v", err)
 		}
-		defer file.Close()
+	}
 
-		err = renderCommentTemplate(data, file)
+	if commit != "" {
+		err = renderTemplateToFile(path, commit, data)
 		if err != nil {
-			log.Fatalf("error writing to comment file: %v", err)
+			log.Fatalf("error writing commit: %v", err)
 		}
 	}
 }
@@ -302,27 +334,23 @@ func (c *client) createArticle(article *Article, body string) ([]byte, error) {
 	return resp.Body, nil
 }
 
-func renderCommentTemplate(data commentData, destination io.Writer) error {
-	const commentTemplate = `## Article Sync Summary
+func renderTemplateToFile(path, tmpl string, data commentData) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("error creating comment file: %w", err)
+	}
+	defer file.Close()
 
-After merge, {{ len .NewArticles }} new article will be created and {{ len .UpdatedArticles }} existing article will be updated.
+	err = renderTemplate(tmpl, data, file)
+	if err != nil {
+		return fmt.Errorf("error writing to comment file: %w", err)
+	}
 
-{{- if gt (len .NewArticles) 0 }}
+	return nil
+}
 
-### New Articles
-{{- range .NewArticles }}
-- {{ .Title }}
-{{- end }}
-{{- end }}
-{{- if gt (len .UpdatedArticles) 0 }}
-
-### Updated Articles
-{{- range .UpdatedArticles }}
-- [{{ .Title }}]({{ .URL }})
-{{- end }}
-{{- end }}`
-
-	tmpl := template.Must(template.New("github_comment").Parse(commentTemplate))
+func renderTemplate(tmplString string, data commentData, destination io.Writer) error {
+	tmpl := template.Must(template.New("tmpl").Parse(tmplString))
 
 	err := tmpl.Execute(destination, data)
 	if err != nil {

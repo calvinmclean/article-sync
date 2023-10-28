@@ -92,14 +92,14 @@ func main() {
 	}
 
 	if prComment != "" {
-		err = renderTemplateToFile(path, commentTemplate, data)
+		err = renderTemplateToFile(prComment, commentTemplate, data)
 		if err != nil {
 			log.Fatalf("error writing PR comment: %v", err)
 		}
 	}
 
 	if commit != "" {
-		err = renderTemplateToFile(path, commit, data)
+		err = renderTemplateToFile(commit, commit, data)
 		if err != nil {
 			log.Fatalf("error writing commit: %v", err)
 		}

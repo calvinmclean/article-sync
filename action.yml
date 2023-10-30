@@ -1,0 +1,79 @@
+name: "Article Sync"
+description: "Synchronize repository markdown files with dev.to"
+author: "calvinmclean"
+inputs:
+  api_key:
+    required: true
+    type: string
+    description: dev.to API key
+  type:
+    required: true
+    type: choice
+    options:
+      - summary
+      - synchronize
+    description: |
+      summary: perform a dry-run and comment on the PR with details of what would be done
+      synchronize: update and post articles, then commit new IDs
+  article_path:
+    required: false
+    type: string
+    default: "./articles"
+    description: root path where articles are stored
+  intermediate_file:
+    required: false
+    type: string
+    default: "article-sync.txt"
+    description: |
+      Comment markdown or commit message is written to this file between steps.
+      Use the default unless it conflicts with a file in your repository.
+  gh_token:
+    required: true
+    type: string
+    default: ${{ github.token }}
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-go@v4
+      with:
+        go-version: 1.21
+        cache: false
+    - name: Run Article Sync to create summary
+      if: ${{ inputs.type == 'summary' }}
+      shell: bash
+      run: |
+        go run -mod=mod github.com/calvinmclean/article-sync@v1 \
+          --api-key $API_KEY \
+          --pr-comment ${{ inputs.intermediate_file }} \
+          --path ${{ inputs.article_path }} \
+          --dry-run
+      env:
+        API_KEY: ${{ inputs.API_KEY }}
+    - name: Comment summary on PR
+      if: ${{ inputs.type == 'summary' }}
+      shell: bash
+      run: |
+        gh pr comment $PR --edit-last --body-file ${{ inputs.intermediate_file }} || gh pr comment $PR --body-file ${{ inputs.intermediate_file }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.gh_token }}
+        PR: ${{ github.event.pull_request.number }}
+    - name: Run Article Sync to synchronize and create commit
+      if: ${{ inputs.type == 'synchronize' }}
+      shell: bash
+      run: |
+        go run -mod=mod github.com/calvinmclean/article-sync@v1 \
+          --api-key $API_KEY \
+          --commit ${{ inputs.intermediate_file }} \
+          --path ${{ inputs.article_path }}
+      env:
+        API_KEY: ${{ inputs.API_KEY }}
+    - name: Commit changes
+      if: ${{ inputs.type == 'synchronize' }}
+      shell: bash
+      run: |
+        git config user.email "actions@github.com"
+        git config user.name "GitHub Actions"
+        git add .
+        git reset ${{ inputs.intermediate_file }}
+        git commit -m "$(cat ${{ inputs.intermediate_file }})" || echo "ignoring error..."
+        git push

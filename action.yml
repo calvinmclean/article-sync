@@ -1,6 +1,9 @@
 name: "Article Sync"
 description: "Synchronize repository markdown files with dev.to"
 author: "calvinmclean"
+branding:
+  icon: refresh-cw
+  color: orange
 inputs:
   api_key:
     required: true

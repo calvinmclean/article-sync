@@ -1,24 +1,8 @@
 # Article Sync
 
-This program allows for easily synchronizing markdown files to a blog/article platform such as [dev.to](https://dev.to).
-Currently only [dev.to](https://dev.to) is supported.
+Manage your articles using git. Synchronize markdown files from a git repository to [dev.to](https://dev.to).
 
-It works declaratively by parsing each article and:
-- If it does not have an ID, create a new article and save ID
-- If it does have an ID:
-    - Compare to existing contents fetched by ID
-    - Update if changed, otherwise leave alone
-
-I plan to create a Github Action from this program that will allow you to have an articles repository that:
-- Does a dry-run when a PR is opened to `main` and comments on the PR so you can see what would change
-- When changes are pushed to `main`, synchronize with the platform API and commit updated `article.json` files 
-
-## How To
-
-```shell
-go run main.go --api-key "SECRET_API_KEY"
-```
-
+## Directory Structure
 This relies on having a directory structure where each article/post consists of a directory with `article.md` and `article.json`:
 ```
 articles/
@@ -45,3 +29,51 @@ Once an article is posted, the ID and slug are saved to the `article.json` file:
     "description": "this article is a test"
 }
 ```
+
+## GitHub Action Usage
+
+When opening a PR, comment a summary of changes
+```yaml
+name: Synchronization summary
+on:
+  pull_request:
+    branches:
+      - main
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/article-sync@v1
+        with:
+          type: summary
+          api_key: ${{ secrets.DEV_TO_API_KEY }}
+```
+
+After pushing to main, synchronize with dev.to and make a commit with new IDs if articles are created
+```yaml
+name: Synchronize and commit
+on:
+  push:
+    branches:
+      - main
+jobs:
+  commit_file:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/article-sync@v1
+        with:
+          type: synchronize
+          api_key: ${{ secrets.DEV_TO_API_KEY }}
+```
+
+This works declaratively by parsing each article and:
+- If it does not have an ID, create a new article and save ID
+- If it does have an ID:
+    - Compare to existing contents fetched by ID
+    - Update if changed, otherwise leave alone
+
+## Roadmap
+- Support tags
+- Allow naming files other than `article.md` or `article.json`

@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/article-sync@v1
+      - uses: calvinmclean/article-sync@v1
         with:
           type: summary
           api_key: ${{ secrets.DEV_TO_API_KEY }}
@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/article-sync@v1
+      - uses: calvinmclean/article-sync@v1
         with:
           type: synchronize
           api_key: ${{ secrets.DEV_TO_API_KEY }}

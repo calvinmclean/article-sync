@@ -45,7 +45,7 @@ runs:
       if: ${{ inputs.type == 'summary' }}
       shell: bash
       run: |
-        go run -mod=mod github.com/calvinmclean/article-sync@v1 \
+        go run -mod=mod github.com/calvinmclean/article-sync@v1.0.0 \
           --api-key $API_KEY \
           --pr-comment ${{ inputs.intermediate_file }} \
           --path ${{ inputs.article_path }} \
@@ -64,7 +64,7 @@ runs:
       if: ${{ inputs.type == 'synchronize' }}
       shell: bash
       run: |
-        go run -mod=mod github.com/calvinmclean/article-sync@v1 \
+        go run -mod=mod github.com/calvinmclean/article-sync@v1.0.0 \
           --api-key $API_KEY \
           --commit ${{ inputs.intermediate_file }} \
           --path ${{ inputs.article_path }}

@@ -1,3 +1,4 @@
 package api
 
-//go:generate go run -mod=mod github.com/deepmap/oapi-codegen/cmd/oapi-codegen --package=api -generate=client,types -o ./forem.gen.go https://raw.githubusercontent.com/forem/forem-docs/main/api_v1.json
+// v0 API did not seem to work and v1 API has `tags` as a `string` instead of `[]string` so I had to download and modify
+//go:generate go run -mod=mod github.com/deepmap/oapi-codegen/cmd/oapi-codegen --package=api -generate=client,types -o ./forem.gen.go ./api.json

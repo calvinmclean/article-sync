@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"text/template"
 	"time"
 
@@ -50,11 +51,12 @@ After merge, {{ len .NewArticles }} new article will be created and {{ len .Upda
 
 // Article is used to show which fields can read/write to local file
 type Article struct {
-	ID          int    `json:"id"`
-	Slug        string `json:"slug"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	URL         string `json:"url"`
+	ID          int      `json:"id"`
+	Slug        string   `json:"slug"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	URL         string   `json:"url"`
+	Tags        []string `json:"tags"`
 
 	new     bool
 	updated bool
@@ -257,27 +259,42 @@ func (c *client) shouldUpdateArticle(markdownBody string, article *Article) (boo
 		return false, fmt.Errorf("error getting article url")
 	}
 
-	return articleMarkdown != markdownBody, nil
+	if articleMarkdown != markdownBody {
+		return true, nil
+	}
+
+	articleTags := articleData["tags"].([]interface{})
+	existingTags := []string{}
+	for _, tag := range articleTags {
+		existingTags = append(existingTags, tag.(string))
+	}
+
+	if !slices.Equal[[]string, string](existingTags, article.Tags) {
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func (c *client) updateArticle(dir string, article *Article, markdownBody string) ([]byte, error) {
 	published := true
 	articleBody := api.Article{}
 	articleBody.Article = &struct {
-		BodyMarkdown   *string "json:\"body_markdown,omitempty\""
-		CanonicalUrl   *string "json:\"canonical_url\""
-		Description    *string "json:\"description,omitempty\""
-		MainImage      *string "json:\"main_image\""
-		OrganizationId *int    "json:\"organization_id\""
-		Published      *bool   "json:\"published,omitempty\""
-		Series         *string "json:\"series\""
-		Tags           *string "json:\"tags,omitempty\""
-		Title          *string "json:\"title,omitempty\""
+		BodyMarkdown   *string   "json:\"body_markdown,omitempty\""
+		CanonicalUrl   *string   "json:\"canonical_url\""
+		Description    *string   "json:\"description,omitempty\""
+		MainImage      *string   "json:\"main_image\""
+		OrganizationId *int      "json:\"organization_id\""
+		Published      *bool     "json:\"published,omitempty\""
+		Series         *string   "json:\"series\""
+		Tags           *[]string "json:\"tags,omitempty\""
+		Title          *string   "json:\"title,omitempty\""
 	}{
 		Title:        &article.Title,
 		Description:  &article.Description,
 		BodyMarkdown: &markdownBody,
 		Published:    &published,
+		Tags:         &article.Tags,
 	}
 
 	resp, err := doWithRetry[*api.UpdateArticleResponse](func() (*api.UpdateArticleResponse, error) {
@@ -313,20 +330,21 @@ func (c *client) createArticle(article *Article, body string) ([]byte, error) {
 	published := true
 	articleBody := api.Article{}
 	articleBody.Article = &struct {
-		BodyMarkdown   *string "json:\"body_markdown,omitempty\""
-		CanonicalUrl   *string "json:\"canonical_url\""
-		Description    *string "json:\"description,omitempty\""
-		MainImage      *string "json:\"main_image\""
-		OrganizationId *int    "json:\"organization_id\""
-		Published      *bool   "json:\"published,omitempty\""
-		Series         *string "json:\"series\""
-		Tags           *string "json:\"tags,omitempty\""
-		Title          *string "json:\"title,omitempty\""
+		BodyMarkdown   *string   "json:\"body_markdown,omitempty\""
+		CanonicalUrl   *string   "json:\"canonical_url\""
+		Description    *string   "json:\"description,omitempty\""
+		MainImage      *string   "json:\"main_image\""
+		OrganizationId *int      "json:\"organization_id\""
+		Published      *bool     "json:\"published,omitempty\""
+		Series         *string   "json:\"series\""
+		Tags           *[]string "json:\"tags,omitempty\""
+		Title          *string   "json:\"title,omitempty\""
 	}{
 		Title:        &article.Title,
 		Description:  &article.Description,
 		BodyMarkdown: &body,
 		Published:    &published,
+		Tags:         &article.Tags,
 	}
 
 	resp, err := doWithRetry[*api.CreateArticleResponse](func() (*api.CreateArticleResponse, error) {

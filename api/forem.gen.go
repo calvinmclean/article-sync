@@ -121,15 +121,15 @@ const (
 // Article Representation of an Article to be created/updated
 type Article struct {
 	Article *struct {
-		BodyMarkdown   *string `json:"body_markdown,omitempty"`
-		CanonicalUrl   *string `json:"canonical_url"`
-		Description    *string `json:"description,omitempty"`
-		MainImage      *string `json:"main_image"`
-		OrganizationId *int    `json:"organization_id"`
-		Published      *bool   `json:"published,omitempty"`
-		Series         *string `json:"series"`
-		Tags           *string `json:"tags,omitempty"`
-		Title          *string `json:"title,omitempty"`
+		BodyMarkdown   *string   `json:"body_markdown,omitempty"`
+		CanonicalUrl   *string   `json:"canonical_url"`
+		Description    *string   `json:"description,omitempty"`
+		MainImage      *string   `json:"main_image"`
+		OrganizationId *int      `json:"organization_id"`
+		Published      *bool     `json:"published,omitempty"`
+		Series         *string   `json:"series"`
+		Tags           *[]string `json:"tags,omitempty"`
+		Title          *string   `json:"title,omitempty"`
 	} `json:"article,omitempty"`
 }
 

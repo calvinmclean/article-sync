@@ -44,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: calvinmclean/article-sync@v1.0.1
+      - uses: calvinmclean/article-sync@v1.2.0
         with:
           type: summary
           api_key: ${{ secrets.DEV_TO_API_KEY }}
@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: calvinmclean/article-sync@v1.0.1
+      - uses: calvinmclean/article-sync@v1.2.0
         with:
           type: synchronize
           api_key: ${{ secrets.DEV_TO_API_KEY }}
@@ -74,6 +74,15 @@ This works declaratively by parsing each article and:
     - Compare to existing contents fetched by ID
     - Update if changed, otherwise leave alone
 
+## Import Existing Articles
+Simply run the CLI with `--init` flag to initialize a directory structure from existing articles.
+Directory names use the article slug, but can be renamed without affecting the program.
+
+```shell
+go run -mod=mod github.com/calvinmclean/article-sync@latest \
+  --api-key $API_KEY \
+  --init
+```
+
 ## Roadmap
-- Support tags
 - Allow naming files other than `article.md` or `article.json`

@@ -69,12 +69,13 @@ type commentData struct {
 
 func main() {
 	var apiKey, path, prComment, commit string
-	var dryRun bool
+	var dryRun, init bool
 	flag.StringVar(&apiKey, "api-key", "", "API key for accessing dev.to")
 	flag.StringVar(&path, "path", "./articles", "root path to scan for articles")
 	flag.StringVar(&prComment, "pr-comment", "", "file to write the PR comment into")
 	flag.StringVar(&commit, "commit", "", "file to write the commit message into")
 	flag.BoolVar(&dryRun, "dry-run", false, "dry-run to print which changes will be made without doing them")
+	flag.BoolVar(&init, "init", false, "download articles from profile and create directories")
 	flag.Parse()
 
 	if apiKey == "" {
@@ -87,6 +88,14 @@ func main() {
 	client, err := newClient(apiKey, dryRun)
 	if err != nil {
 		log.Fatalf("error creating API client: %v", err)
+	}
+
+	if init {
+		err = client.init(path)
+		if err != nil {
+			log.Fatalf("error initializing: %v", err)
+		}
+		return
 	}
 
 	var data commentData
@@ -126,6 +135,128 @@ func newClient(apikey string, dryRun bool) (*client, error) {
 	}
 
 	return &client{c, dryRun, slog.New(slog.NewTextHandler(os.Stdout, nil))}, nil
+}
+
+func (c *client) init(path string) error {
+	err := os.MkdirAll(path, 0755)
+	if err != nil {
+		return fmt.Errorf("error creating directory: %w", err)
+	}
+
+	articles, err := c.getPublishedArticles()
+	if err != nil {
+		return fmt.Errorf("error getting articles: %w", err)
+	}
+	c.logger.Info("fetched articles", "count", len(articles))
+
+	existingArticles, err := c.getExistingArticleIDs(path)
+	if err != nil {
+		return fmt.Errorf("error getting existing article IDs: %w", err)
+	}
+	c.logger.Info("existing articles", "count", len(existingArticles))
+
+	for _, a := range articles {
+		logger := c.logger.With("id", a.Id)
+		logger.Info("creating article locally")
+
+		_, exists := existingArticles[int(a.Id)]
+		if exists {
+			logger.Info("article exists")
+			continue
+		}
+
+		fullArticle, err := c.getArticle(int(a.Id))
+		if err != nil {
+			logger.Error("error getting article", "error", err)
+			continue
+		}
+
+		logger.Info("got full article details")
+
+		articleDir := filepath.Join(path, a.Slug)
+		err = os.MkdirAll(articleDir, 0755)
+		if err != nil {
+			return fmt.Errorf("error creating directory: %w", err)
+		}
+
+		logger.Info("created directory", "dir", articleDir)
+
+		err = writeArticleFile(articleDir, &Article{
+			ID:          int(a.Id),
+			Slug:        a.Slug,
+			Title:       a.Title,
+			Description: a.Description,
+			URL:         a.Url,
+			Tags:        a.TagList,
+		})
+		if err != nil {
+			return fmt.Errorf("error writing article JSON file: %w", err)
+		}
+
+		articleMarkdown, ok := fullArticle["body_markdown"].(string)
+		if !ok {
+			return fmt.Errorf("error checking body_markdown")
+		}
+
+		err = os.WriteFile(filepath.Join(articleDir, "article.md"), []byte(articleMarkdown), 0644)
+
+		logger.Info("added files", "dir", articleDir)
+	}
+
+	return nil
+}
+
+func (c *client) getExistingArticleIDs(rootDir string) (map[int]struct{}, error) {
+	result := map[int]struct{}{}
+
+	err := filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("error accessing path %s: %w", path, err)
+		}
+
+		if path == rootDir {
+			return nil
+		}
+
+		if !d.IsDir() {
+			return nil
+		}
+
+		c.logger.Info("checking for article", "directory", path)
+		data, err := os.ReadFile(filepath.Join(path, "article.json"))
+		if err != nil {
+			return fmt.Errorf("error reading JSON file: %w", err)
+		}
+
+		var article *Article
+		err = json.Unmarshal(data, &article)
+		if err != nil {
+			return fmt.Errorf("error parsing article details: %w", err)
+		}
+
+		c.logger.Info("found article", "id", article.ID)
+
+		result[article.ID] = struct{}{}
+
+		return nil
+	})
+
+	return result, err
+}
+
+func (c *client) getPublishedArticles() ([]api.ArticleIndex, error) {
+	resp, err := doWithRetry[*api.GetUserPublishedArticlesResponse](func() (*api.GetUserPublishedArticlesResponse, error) {
+		return c.GetUserPublishedArticlesWithResponse(context.Background(), nil)
+	}, 5, 1*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("error getting articles: %w", err)
+	}
+
+	if resp.StatusCode() != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status getting articles: %d %s", resp.StatusCode(), string(resp.Body))
+	}
+
+	return *resp.JSON200, nil
 }
 
 func (c *client) syncArticlesFromRootDirectory(rootDir string, data *commentData) error {
@@ -230,17 +361,26 @@ func (c *client) syncArticleFromDirectory(dir string) (*Article, error) {
 
 	logger.Info("successfully synchronized article")
 
-	newData, err := json.MarshalIndent(article, "", "    ")
+	err = writeArticleFile(dir, article)
 	if err != nil {
-		return nil, fmt.Errorf("error marshaling response JSON to write to file: %w", err)
-	}
-
-	err = os.WriteFile(filepath.Join(dir, "article.json"), newData, 0640)
-	if err != nil {
-		return nil, fmt.Errorf("error writing JSON file: %w", err)
+		return nil, fmt.Errorf("error writing article JSON file: %w", err)
 	}
 
 	return article, nil
+}
+
+func writeArticleFile(path string, article *Article) error {
+	data, err := json.MarshalIndent(article, "", "    ")
+	if err != nil {
+		return fmt.Errorf("error marshaling response JSON to write to file: %w", err)
+	}
+
+	err = os.WriteFile(filepath.Join(path, "article.json"), data, 0640)
+	if err != nil {
+		return fmt.Errorf("error writing JSON file: %w", err)
+	}
+
+	return nil
 }
 
 func (c *client) shouldUpdateArticle(markdownBody string, article *Article) (bool, error) {

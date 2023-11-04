@@ -245,7 +245,7 @@ func (c *client) getExistingArticleIDs(rootDir string) (map[int]struct{}, error)
 }
 
 func (c *client) getPublishedArticles() ([]api.ArticleIndex, error) {
-	resp, err := doWithRetry[*api.GetUserPublishedArticlesResponse](func() (*api.GetUserPublishedArticlesResponse, error) {
+	resp, err := doWithRetry(func() (*api.GetUserPublishedArticlesResponse, error) {
 		return c.GetUserPublishedArticlesWithResponse(context.Background(), nil)
 	}, 5, 1*time.Second)
 	if err != nil {
@@ -437,7 +437,7 @@ func (c *client) updateArticle(dir string, article *Article, markdownBody string
 		Tags:         &article.Tags,
 	}
 
-	resp, err := doWithRetry[*api.UpdateArticleResponse](func() (*api.UpdateArticleResponse, error) {
+	resp, err := doWithRetry(func() (*api.UpdateArticleResponse, error) {
 		return c.UpdateArticleWithResponse(context.Background(), int32(article.ID), articleBody)
 	}, 5, 1*time.Second)
 	if err != nil {
@@ -452,7 +452,7 @@ func (c *client) updateArticle(dir string, article *Article, markdownBody string
 }
 
 func (c *client) getArticle(id int) (map[string]interface{}, error) {
-	resp, err := doWithRetry[*api.GetArticleByIdResponse](func() (*api.GetArticleByIdResponse, error) {
+	resp, err := doWithRetry(func() (*api.GetArticleByIdResponse, error) {
 		return c.GetArticleByIdWithResponse(context.Background(), id)
 	}, 5, 1*time.Second)
 	if err != nil {
@@ -487,7 +487,7 @@ func (c *client) createArticle(article *Article, body string) ([]byte, error) {
 		Tags:         &article.Tags,
 	}
 
-	resp, err := doWithRetry[*api.CreateArticleResponse](func() (*api.CreateArticleResponse, error) {
+	resp, err := doWithRetry(func() (*api.CreateArticleResponse, error) {
 		return c.CreateArticleWithResponse(context.Background(), articleBody)
 	}, 5, 1*time.Second)
 	if err != nil {

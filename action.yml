@@ -67,7 +67,8 @@ runs:
         go run -mod=mod github.com/calvinmclean/article-sync@v1.0.1 \
           --api-key $API_KEY \
           --commit ${{ inputs.intermediate_file }} \
-          --path ${{ inputs.article_path }}
+          --path ${{ inputs.article_path }} \
+          --repo ${{ github.repository }} --branch ${{ github.ref_name }}
       env:
         API_KEY: ${{ inputs.API_KEY }}
     - name: Commit changes

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"io/fs"
 	"log"
 	"log/slog"
@@ -13,40 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"text/template"
-	"time"
 
 	"github.com/calvinmclean/article-sync/api"
-)
-
-const (
-	commentTemplate = `## Article Sync Summary
-
-After merge, {{ len .NewArticles }} new article will be created and {{ len .UpdatedArticles }} existing article will be updated.
-
-{{- if gt (len .NewArticles) 0 }}
-
-### New Articles
-{{- range .NewArticles }}
-- {{ .Title }}
-{{- end }}
-{{- end }}
-{{- if gt (len .UpdatedArticles) 0 }}
-
-### Updated Articles
-{{- range .UpdatedArticles }}
-- [{{ .Title }}]({{ .URL }})
-{{- end }}
-{{- end }}`
-
-	commitTemplate = `completed sync: {{ len .NewArticles }} new, {{ len .UpdatedArticles }} updated
-{{ if or (gt (len .NewArticles) 0) (gt (len .UpdatedArticles) 0) }}{{ end }}
-{{- range .NewArticles }}
-- new: {{ .Title }} ({{ .URL }})
-{{- end }}
-{{- range .UpdatedArticles }}
-- updated: {{ .Title }} ({{ .URL }})
-{{- end }}`
+	"github.com/fogleman/gg"
 )
 
 // Article is used to show which fields can read/write to local file
@@ -58,6 +26,8 @@ type Article struct {
 	URL         string   `json:"url"`
 	Tags        []string `json:"tags"`
 
+	Gopher string `json:"gopher"`
+
 	new     bool
 	updated bool
 }
@@ -68,13 +38,16 @@ type commentData struct {
 }
 
 func main() {
-	var apiKey, path, prComment, commit string
-	var dryRun, init bool
+	var apiKey, path, prComment, commit, repositoryName, branch string
+	var dryRun, createImage, init bool
 	flag.StringVar(&apiKey, "api-key", "", "API key for accessing dev.to")
 	flag.StringVar(&path, "path", "./articles", "root path to scan for articles")
 	flag.StringVar(&prComment, "pr-comment", "", "file to write the PR comment into")
 	flag.StringVar(&commit, "commit", "", "file to write the commit message into")
+	flag.StringVar(&repositoryName, "repo", "", "repository name. Used for cover image URL")
+	flag.StringVar(&branch, "branch", "", "main branch name. Used for cover image URL")
 	flag.BoolVar(&dryRun, "dry-run", false, "dry-run to print which changes will be made without doing them")
+	flag.BoolVar(&createImage, "create-image", false, "create gopher cover image even if using dry-run")
 	flag.BoolVar(&init, "init", false, "download articles from profile and create directories")
 	flag.Parse()
 
@@ -85,7 +58,7 @@ func main() {
 		}
 	}
 
-	client, err := newClient(apiKey, dryRun)
+	client, err := newClient(apiKey, dryRun, createImage)
 	if err != nil {
 		log.Fatalf("error creating API client: %v", err)
 	}
@@ -96,6 +69,11 @@ func main() {
 			log.Fatalf("error initializing: %v", err)
 		}
 		return
+	}
+
+	if branch != "" || repositoryName != "" {
+		client.repositoryName = repositoryName
+		client.branch = branch
 	}
 
 	var data commentData
@@ -121,11 +99,13 @@ func main() {
 
 type client struct {
 	*api.ClientWithResponses
-	dryRun bool
-	logger *slog.Logger
+	dryRun, createImage bool
+	logger              *slog.Logger
+
+	repositoryName, branch string
 }
 
-func newClient(apikey string, dryRun bool) (*client, error) {
+func newClient(apikey string, dryRun, createImage bool) (*client, error) {
 	c, err := api.NewClientWithResponses("https://dev.to", api.WithRequestEditorFn(func(ctx context.Context, req *http.Request) error {
 		req.Header.Add("api-key", apikey)
 		return nil
@@ -134,7 +114,7 @@ func newClient(apikey string, dryRun bool) (*client, error) {
 		return nil, fmt.Errorf("error creating client: %w", err)
 	}
 
-	return &client{c, dryRun, slog.New(slog.NewTextHandler(os.Stdout, nil))}, nil
+	return &client{c, dryRun, createImage, slog.New(slog.NewTextHandler(os.Stdout, nil)), "", ""}, nil
 }
 
 func (c *client) init(path string) error {
@@ -199,6 +179,9 @@ func (c *client) init(path string) error {
 		}
 
 		err = os.WriteFile(filepath.Join(articleDir, "article.md"), []byte(articleMarkdown), 0644)
+		if err != nil {
+			return fmt.Errorf("error writing article markdown file: %w", err)
+		}
 
 		logger.Info("added files", "dir", articleDir)
 	}
@@ -242,21 +225,6 @@ func (c *client) getExistingArticleIDs(rootDir string) (map[int]struct{}, error)
 	})
 
 	return result, err
-}
-
-func (c *client) getPublishedArticles() ([]api.ArticleIndex, error) {
-	resp, err := doWithRetry(func() (*api.GetUserPublishedArticlesResponse, error) {
-		return c.GetUserPublishedArticlesWithResponse(context.Background(), nil)
-	}, 5, 1*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("error getting articles: %w", err)
-	}
-
-	if resp.StatusCode() != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status getting articles: %d %s", resp.StatusCode(), string(resp.Body))
-	}
-
-	return *resp.JSON200, nil
 }
 
 func (c *client) syncArticlesFromRootDirectory(rootDir string, data *commentData) error {
@@ -318,10 +286,33 @@ func (c *client) syncArticleFromDirectory(dir string) (*Article, error) {
 	case 0:
 		article.new = true
 		logger.Info("creating new article")
+
+		if article.Gopher != "" {
+			logger.With("gopher", article.Gopher).Info("creating gopher cover image")
+		}
+		if article.Gopher != "" && (c.createImage || !c.dryRun) {
+			coverImg, err := createCoverImage(article.Gopher, article.Title)
+			if err != nil {
+				return nil, fmt.Errorf("error creating cover image: %w", err)
+			}
+
+			err = gg.SavePNG(filepath.Join(dir, "cover_image.png"), coverImg)
+			if err != nil {
+				return nil, fmt.Errorf("error saving image: %w", err)
+			}
+		}
+		img := ""
+		_, err = os.Stat(filepath.Join(dir, "cover_image.png"))
+		if err == nil {
+			img = fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/cover_image.png", c.repositoryName, c.branch, dir)
+			logger.With("url", img).Info("adding image to article")
+		}
+
 		if c.dryRun {
 			return article, nil
 		}
-		respBody, err = c.createArticle(article, string(markdownBody))
+
+		respBody, err = c.createArticle(article, string(markdownBody), img)
 		if err != nil {
 			return nil, fmt.Errorf("error creating article: %w", err)
 		}
@@ -414,137 +405,4 @@ func (c *client) shouldUpdateArticle(markdownBody string, article *Article) (boo
 	}
 
 	return false, nil
-}
-
-func (c *client) updateArticle(dir string, article *Article, markdownBody string) ([]byte, error) {
-	published := true
-	articleBody := api.Article{}
-	articleBody.Article = &struct {
-		BodyMarkdown   *string   "json:\"body_markdown,omitempty\""
-		CanonicalUrl   *string   "json:\"canonical_url\""
-		Description    *string   "json:\"description,omitempty\""
-		MainImage      *string   "json:\"main_image\""
-		OrganizationId *int      "json:\"organization_id\""
-		Published      *bool     "json:\"published,omitempty\""
-		Series         *string   "json:\"series\""
-		Tags           *[]string "json:\"tags,omitempty\""
-		Title          *string   "json:\"title,omitempty\""
-	}{
-		Title:        &article.Title,
-		Description:  &article.Description,
-		BodyMarkdown: &markdownBody,
-		Published:    &published,
-		Tags:         &article.Tags,
-	}
-
-	resp, err := doWithRetry(func() (*api.UpdateArticleResponse, error) {
-		return c.UpdateArticleWithResponse(context.Background(), int32(article.ID), articleBody)
-	}, 5, 1*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("error updating article: %w", err)
-	}
-
-	if resp.StatusCode() != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status updating article %d: %d %s", article.ID, resp.StatusCode(), string(resp.Body))
-	}
-
-	return resp.Body, nil
-}
-
-func (c *client) getArticle(id int) (map[string]interface{}, error) {
-	resp, err := doWithRetry(func() (*api.GetArticleByIdResponse, error) {
-		return c.GetArticleByIdWithResponse(context.Background(), id)
-	}, 5, 1*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("error getting article %d: %w", id, err)
-	}
-
-	if resp.StatusCode() != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status getting article %d: %d %s", id, resp.StatusCode(), string(resp.Body))
-	}
-
-	return *resp.JSON200, nil
-}
-
-func (c *client) createArticle(article *Article, body string) ([]byte, error) {
-	published := true
-	articleBody := api.Article{}
-	articleBody.Article = &struct {
-		BodyMarkdown   *string   "json:\"body_markdown,omitempty\""
-		CanonicalUrl   *string   "json:\"canonical_url\""
-		Description    *string   "json:\"description,omitempty\""
-		MainImage      *string   "json:\"main_image\""
-		OrganizationId *int      "json:\"organization_id\""
-		Published      *bool     "json:\"published,omitempty\""
-		Series         *string   "json:\"series\""
-		Tags           *[]string "json:\"tags,omitempty\""
-		Title          *string   "json:\"title,omitempty\""
-	}{
-		Title:        &article.Title,
-		Description:  &article.Description,
-		BodyMarkdown: &body,
-		Published:    &published,
-		Tags:         &article.Tags,
-	}
-
-	resp, err := doWithRetry(func() (*api.CreateArticleResponse, error) {
-		return c.CreateArticleWithResponse(context.Background(), articleBody)
-	}, 5, 1*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("error creating article: %w", err)
-	}
-
-	if resp.StatusCode() != http.StatusCreated {
-		return nil, fmt.Errorf("unexpected status creating article: %d %s", resp.StatusCode(), string(resp.Body))
-	}
-
-	return resp.Body, nil
-}
-
-func renderTemplateToFile(path, tmpl string, data commentData) error {
-	file, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("error creating file: %w", err)
-	}
-	defer file.Close()
-
-	err = renderTemplate(tmpl, data, file)
-	if err != nil {
-		return fmt.Errorf("error writing to file: %w", err)
-	}
-
-	return nil
-}
-
-func renderTemplate(tmplString string, data commentData, destination io.Writer) error {
-	tmpl := template.Must(template.New("tmpl").Parse(tmplString))
-
-	err := tmpl.Execute(destination, data)
-	if err != nil {
-		return fmt.Errorf("error executing template: %w", err)
-	}
-
-	return nil
-}
-
-type response interface {
-	StatusCode() int
-}
-
-func doWithRetry[T response](f func() (T, error), numRetries int, initialWait time.Duration) (T, error) {
-	for i := 1; i <= numRetries; i++ {
-		result, err := f()
-		if err != nil {
-			return *new(T), err
-		}
-
-		if result.StatusCode() == http.StatusTooManyRequests {
-			time.Sleep(initialWait * time.Duration(i))
-			continue
-		}
-
-		return result, err
-	}
-
-	return *new(T), fmt.Errorf("exhausted retry limit %d", numRetries)
 }

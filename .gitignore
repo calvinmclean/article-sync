@@ -2,3 +2,4 @@ vendor/
 articles/
 comment.md
 article-sync
+.DS_STORE

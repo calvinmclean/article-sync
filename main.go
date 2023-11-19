@@ -25,6 +25,7 @@ type Article struct {
 	Description string   `json:"description"`
 	URL         string   `json:"url"`
 	Tags        []string `json:"tags"`
+	CoverImage  string   `json:"cover_image"`
 
 	Gopher string `json:"gopher"`
 
@@ -323,11 +324,11 @@ func (c *client) syncArticleFromDirectory(dir string) (*Article, error) {
 		if err != nil {
 			return nil, fmt.Errorf("error checking if article needs update: %w", err)
 		}
-		if !shouldUpdate {
+		if shouldUpdate == "" {
 			logger.Info("article is up-to-date")
 			return article, nil
 		}
-		logger.Info("updating article with new body")
+		logger.With("reason", shouldUpdate).Info("updating article")
 		article.updated = true
 
 		if c.dryRun {
@@ -374,24 +375,24 @@ func writeArticleFile(path string, article *Article) error {
 	return nil
 }
 
-func (c *client) shouldUpdateArticle(markdownBody string, article *Article) (bool, error) {
+func (c *client) shouldUpdateArticle(markdownBody string, article *Article) (string, error) {
 	articleData, err := c.getArticle(article.ID)
 	if err != nil {
-		return false, fmt.Errorf("error getting article: %w", err)
+		return "", fmt.Errorf("error getting article: %w", err)
 	}
 
 	articleMarkdown, ok := articleData["body_markdown"].(string)
 	if !ok {
-		return false, fmt.Errorf("error checking body_markdown")
+		return "", fmt.Errorf("error checking body_markdown")
 	}
 
 	article.URL, ok = articleData["url"].(string)
 	if !ok {
-		return false, fmt.Errorf("error getting article url")
+		return "", fmt.Errorf("error getting article url")
 	}
 
 	if articleMarkdown != markdownBody {
-		return true, nil
+		return "body changed", nil
 	}
 
 	articleTags := articleData["tags"].([]interface{})
@@ -401,8 +402,8 @@ func (c *client) shouldUpdateArticle(markdownBody string, article *Article) (boo
 	}
 
 	if !slices.Equal[[]string, string](existingTags, article.Tags) {
-		return true, nil
+		return "different tags", nil
 	}
 
-	return false, nil
+	return "", nil
 }

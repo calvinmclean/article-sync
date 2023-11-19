@@ -43,6 +43,7 @@ func (c *client) updateArticle(dir string, article *Article, markdownBody string
 		BodyMarkdown: &markdownBody,
 		Published:    &published,
 		Tags:         &article.Tags,
+		MainImage:    &article.CoverImage,
 	}
 
 	resp, err := doWithRetry(func() (*api.UpdateArticleResponse, error) {
